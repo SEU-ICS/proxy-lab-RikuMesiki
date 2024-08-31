@@ -15,142 +15,129 @@
 typedef char buf_t[MAX_BUF_SIZE];
 typedef struct {
     buf_t host, port, path;
-} link_info_t;
+} request_t;
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
-void* client_handler(void *arg);
-void handle_request(rio_t* rio, buf_t url);
-int parse_uri(buf_t url, link_info_t* info);
-int build_header(rio_t* rio, buf_t headers, buf_t host);
+void* start(void* client_sock);
+void serve(int client_fd);
+int split(const char* url, request_t* req);
+void make(int server_fd, const request_t* req, buf_t request);
 
 int main(int argc, char **argv) {
-    int listenfd, *connfdp;
+    int listenfd, *clientfdp;
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
     pthread_t tid;
 
     if (argc != 2) {
-        printf("Usage: %s <port>\n", argv[0]);
-        exit(1);
+        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
 
     listenfd = Open_listenfd(argv[1]);
 
     while (1) {
         clientlen = sizeof(clientaddr);
-        connfdp = malloc(sizeof(int));
-        *connfdp = Accept(listenfd, (SA*)&clientaddr, &clientlen);
-        pthread_create(&tid, NULL, client_handler, connfdp);
+        clientfdp = malloc(sizeof(int));
+        *clientfdp = Accept(listenfd, (SA*)&clientaddr, &clientlen);
+        pthread_create(&tid, NULL, start, clientfdp);
     }
 
     close(listenfd);
     return 0;
 }
 
-void* client_handler(void* arg) {
-    int clientfd = *((int*)arg);
-    free(arg);
+void* start(void* client_sock) {
+    int client_fd = *((int*)client_sock);
+    free(client_sock);
     pthread_detach(pthread_self());
 
-    rio_t rio;
-    buf_t buf, method, url, version;
+    serve(client_fd);
 
-    rio_readinitb(&rio, clientfd);
-    if (rio_readlineb(&rio, buf, MAX_BUF_SIZE) <= 0) {
-        close(clientfd);
-        return NULL;
-    }
-
-    sscanf(buf, "%s %s %s", method, url, version);
-    if (strcmp(method, "GET") == 0) {
-        handle_request(&rio, url);
-    }
-
-    close(clientfd);
+    close(client_fd);
     return NULL;
 }
 
-int parse_uri(buf_t url, link_info_t* info) {
-    if (strncmp(url, "http://", 7) != 0) return -1;
+void serve(int client_fd) {
+    rio_t client;
+    buf_t buf, method, uri, version;
+    request_t req;
 
-    char *host_start = url + 7;
-    char *port_start = strchr(host_start, ':');
-    char *path_start = strchr(host_start, '/');
-
-    if (!path_start) return -1;
-
-    if (!port_start) {
-        strcpy(info->port, "80");
-        *path_start = '\0';
-        strcpy(info->host, host_start);
-        *path_start = '/';
-    } else {
-        *port_start = '\0';
-        strcpy(info->host, host_start);
-        *port_start = ':';
-        *path_start = '\0';
-        strcpy(info->port, port_start + 1);
-        *path_start = '/';
-    }
-    
-    strcpy(info->path, path_start);
-    return 0;
-}
-
-int build_header(rio_t* rio, buf_t headers, buf_t host) {
-    buf_t buf;
-    int has_host = 0;
-
-    while (rio_readlineb(rio, buf, MAX_BUF_SIZE) > 0) {
-        if (!strcmp(buf, "\r\n")) break;
-        if (strstr(buf, "Host:")) has_host = 1;
-        if (!strstr(buf, "Connection:") && !strstr(buf, "Proxy-Connection:") && !strstr(buf, "User-Agent:")) {
-            strcat(headers, buf);
-        }
-    }
-
-    if (!has_host) {
-        sprintf(buf, "Host: %s\r\n", host);
-        strcat(headers, buf);
-    }
-    strcat(headers, "Connection: close\r\nProxy-Connection: close\r\n");
-    strcat(headers, user_agent_hdr);
-    strcat(headers, "\r\n");
-
-    return 0;
-}
-
-void handle_request(rio_t* rio, buf_t url) {
-    link_info_t info;
-    if (parse_uri(url, &info) < 0) {
+    rio_readinitb(&client, client_fd);
+    if (rio_readlineb(&client, buf, MAX_BUF_SIZE) <= 0) {
         return;
     }
 
-    buf_t headers;
-    build_header(rio, headers, info.host);
-
-    int serverfd = Open_clientfd(info.host, info.port);
-    if (serverfd < 0) return;
-
-    rio_t server_rio;
-    rio_readinitb(&server_rio, serverfd);
-
-    buf_t buf;
-    sprintf(buf, "GET %s HTTP/1.0\r\n%s", info.path, headers);
-    rio_writen(serverfd, buf, strlen(buf));
-
-    int n;
-    int clientfd = rio->rio_fd;
-
-    while ((n = rio_readnb(&server_rio, buf, MAX_BUF_SIZE)) > 0) {
-        rio_writen(clientfd, buf, n);
+    sscanf(buf, "%s %s %s", method, uri, version);
+    if (strcasecmp(method, "GET") != 0) {
+        return;
     }
 
-    close(serverfd);
+    if (split(uri, &req) < 0) {
+        return;
+    }
+
+    int server_fd = Open_clientfd(req.host, req.port);
+    if (server_fd < 0) {
+        return;
+    }
+
+    make(server_fd, &req, buf);
+
+    rio_t server;
+    rio_readinitb(&server, server_fd);
+
+    int n;
+    while ((n = rio_readnb(&server, buf, MAX_BUF_SIZE)) > 0) {
+        rio_writen(client_fd, buf, n);
+    }
+
+    close(server_fd);
 }
 
+int split(const char* url, request_t* req) {
+    const char* prefix = "http://";
+    if (strncasecmp(url, prefix, strlen(prefix)) != 0) {
+        return -1;
+    }
 
+    char* url_copy = strdup(url + strlen(prefix));
+    char* port_pos = strchr(url_copy, ':');
+    char* path_pos = strchr(url_copy, '/');
+
+    if (port_pos) {
+        *port_pos = '\0';
+        strcpy(req->host, url_copy);
+        *port_pos = ':';
+        sscanf(port_pos + 1, "%[^/]", req->port);
+    } else {
+        strcpy(req->port, "80");
+        path_pos = strchr(url_copy, '/');
+        *path_pos = '\0';
+        strcpy(req->host, url_copy);
+    }
+
+    if (path_pos) {
+        strcpy(req->path, path_pos);
+    } else {
+        strcpy(req->path, "/");
+    }
+
+    free(url_copy);
+    return 0;
+}
+
+void make(int server_fd, const request_t* req, buf_t request) {
+    buf_t headers;
+    sprintf(request, "GET %s HTTP/1.0\r\n", req->path);
+    sprintf(headers, "Host: %s\r\n", req->host);
+    strcat(headers, user_agent_hdr);
+    strcat(headers, "Connection: close\r\n");
+    strcat(headers, "Proxy-Connection: close\r\n\r\n");
+    strcat(request, headers);
+    rio_writen(server_fd, request, strlen(request));
+}
 
 
