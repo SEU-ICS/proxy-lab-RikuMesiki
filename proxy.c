@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-void handle_client(int clientfd) {
+void handle_client(int clientfd) 
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char hostname[MAXLINE], path[MAXLINE], port[10];
     rio_t rio;
@@ -40,18 +40,15 @@ void handle_client(int clientfd) {
     sscanf(buf, "%s %s %s", method, uri, version);
 
     if (strcasecmp(method, "GET") != 0) {
-        printf("Only GET method is supported\n");
         return;
     }
 
     if (parse_uri(uri, hostname, path, port) < 0) {
-        printf("Error parsing URI\n");
         return;
     }
 
     int serverfd = Open_clientfd(hostname, port);
-    if (serverfd < 0) {
-        printf("Error connecting to server\n");
+    if (serverfd < 0)
         return;
     }
 
