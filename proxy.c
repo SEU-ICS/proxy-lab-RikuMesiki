@@ -65,7 +65,7 @@ void* start(void* client_sock) {
 
 void serve(int client_fd) {
     rio_t client;
-    buf_t buf, method, uri, version;
+    buf_t buf, method, url, version;
     request_t req;
 
     rio_readinitb(&client, client_fd);
@@ -73,19 +73,19 @@ void serve(int client_fd) {
         return;
     }
 
-    sscanf(buf, "%s %s %s", method, uri, version);
+    sscanf(buf, "%s %s %s", method, url, version);
     if (strcasecmp(method, "GET") != 0) {
         return;
     }
 
     char cached_data[MAX_OBJECT_SIZE];
-    int cached_size = load(uri, cached_data);
+    int cached_size = load(url, cached_data);
     if (cached_size > 0) {
         rio_writen(client_fd, cached_data, cached_size);
         return;
     }
 
-    if (split(uri, &req) < 0) {
+    if (split(url, &req) < 0) {
         return;
     }
     
