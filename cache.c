@@ -1,5 +1,6 @@
 #include <string.h>
 #include "cache.h"
+#include "csapp.h"
 
 static Entry cache[MAX_ENTRIES];
 static int count = 0;
