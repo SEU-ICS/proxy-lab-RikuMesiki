@@ -1,6 +1,6 @@
 #ifndef CACHE_H
 #define CACHE_H
-
+#include "csapp.h"
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
 #define MAX_ENTRIES 10
