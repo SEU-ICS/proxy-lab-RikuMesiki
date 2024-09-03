@@ -17,85 +17,6 @@ typedef struct {
     buf_t host, port, path;
 } request_t;
 
-typedef struct {
-    char *url;
-    char *content;
-    int size;
-    int last_used;
-} cache_entry;
-
-typedef struct {
-    cache_entry *entries;
-    int size;
-    int capacity;
-    int timestamp;
-} cache;
-
-cache *proxy_cache;
-
-void cache_init(int capacity);
-void cache_free();
-cache_entry *cache_find(char *url);
-void cache_add(char *url, char *content, int size);
-void cache_evict();
-
-void cache_init(int capacity) {
-    proxy_cache = (cache *)malloc(sizeof(cache));
-    proxy_cache->entries = (cache_entry *)malloc(capacity * sizeof(cache_entry));
-    proxy_cache->size = 0;
-    proxy_cache->capacity = capacity;
-    proxy_cache->timestamp = 0;
-}
-
-void cache_free() {
-    for (int i = 0; i < proxy_cache->size; i++) {
-        free(proxy_cache->entries[i].url);
-        free(proxy_cache->entries[i].content);
-    }
-    free(proxy_cache->entries);
-    free(proxy_cache)；
-}
-
-cache_entry *cache_find(char *url) {
-    for (int i = 0; i < proxy_cache->size; i++) {
-        if (strcmp(proxy_cache->entries[i].url, url) == 0) {
-            proxy_cache->entries[i].last_used = proxy_cache->timestamp++;
-            return &proxy_cache->entries[i];
-        }
-    }
-    return NULL;
-}
-
-void cache_add(char *url, char *content, int size) {
-    if (size > MAX_OBJECT_SIZE) return;
-
-    if (proxy_cache->size == proxy_cache->capacity) {
-        cache_evict();
-    }
-
-    int idx = proxy_cache->size++;
-    proxy_cache->entries[idx].url = strdup(url);
-    proxy_cache->entries[idx].content = malloc(size);
-    memcpy(proxy_cache->entries[idx].content, content, size);
-    proxy_cache->entries[idx].size = size;
-    proxy_cache->entries[idx].last_used = proxy_cache->timestamp++;
-}
-
-void cache_evict() {
-    int lru_idx = 0;
-    for (int i = 1; i < proxy_cache->size; i++) {
-        if (proxy_cache->entries[i].last_used < proxy_cache->entries[lru_idx].last_used) {
-            lru_idx = i;
-        }
-    }
-
-    free(proxy_cache->entries[lru_idx].url);
-    free(proxy_cache->entries[lru_idx].content);
-    proxy_cache->entries[lru_idx] = proxy_cache->entries[--proxy_cache->size];
-}
-
-
-
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 
@@ -117,7 +38,6 @@ int main(int argc, char **argv) {
     }
 
     listenfd = Open_listenfd(argv[1]);
-    cache_init(10);
     while (1) {
         clientlen = sizeof(clientaddr);
         clientfdp = malloc(sizeof(int));
@@ -126,7 +46,6 @@ int main(int argc, char **argv) {
     }
 
     close(listenfd);
-    cache_free();
     return 0;
 }
 
@@ -159,12 +78,6 @@ void serve(int client_fd) {
     if (split(uri, &req) < 0) {
         return;
     }
-        
-    cache_entry *entry = cache_find(uri);
-    if (entry) {
-        rio_writen(client_fd, entry->content, entry->size);
-        return;
-    }
     
     int server_fd = Open_clientfd(req.host, req.port);
     if (server_fd < 0) {
@@ -175,24 +88,11 @@ void serve(int client_fd) {
 
     rio_t server;
     rio_readinitb(&server, server_fd);
-    
-    char *response = malloc(MAX_OBJECT_SIZE);
-    int total_size = 0;
     int n;
     
-   while ((n = rio_readnb(&server, buf, MAX_BUF_SIZE)) > 0) {
-        if (total_size + n <= MAX_OBJECT_SIZE) {
-            memcpy(response + total_size, buf, n);
-            total_size += n;
-        }
+    while ((n = rio_readnb(&server, buf, MAX_BUF_SIZE)) > 0) {
         rio_writen(client_fd, buf, n);
     }
-
-    if (total_size <= MAX_OBJECT_SIZE) {
-        cache_add(uri, response, total_size);
-    }
-
-    free(response);
 
     close(server_fd);
 }
