@@ -79,7 +79,7 @@ void serve(int client_fd) {
     }
 
     char cached_data[MAX_OBJECT_SIZE];
-    int cached_size = load(url, cached_data);
+    int cached_size = load(uri, cached_data);
     if (cached_size > 0) {
         rio_writen(client_fd, cached_data, cached_size);
         return;
