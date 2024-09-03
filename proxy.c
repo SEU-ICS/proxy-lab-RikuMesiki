@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <netdb.h>
 #include "csapp.h"
+#include "cache.h"
 
 
 /* Recommended max cache and object sizes */
@@ -38,6 +39,8 @@ int main(int argc, char **argv) {
     }
 
     listenfd = Open_listenfd(argv[1]);
+    init();
+    
     while (1) {
         clientlen = sizeof(clientaddr);
         clientfdp = malloc(sizeof(int));
@@ -75,6 +78,13 @@ void serve(int client_fd) {
         return;
     }
 
+    char cached_data[MAX_OBJECT_SIZE];
+    int cached_size = load(url, cached_data);
+    if (cached_size > 0) {
+        rio_writen(client_fd, cached_data, cached_size);
+        return;
+    }
+
     if (split(uri, &req) < 0) {
         return;
     }
@@ -89,11 +99,21 @@ void serve(int client_fd) {
     rio_t server;
     rio_readinitb(&server, server_fd);
     int n;
-    
+    int total_size = 0;
+    char cache_buf[MAX_OBJECT_SIZE];
+
     while ((n = rio_readnb(&server, buf, MAX_BUF_SIZE)) > 0) {
         rio_writen(client_fd, buf, n);
+        if (total_size + n <= MAX_OBJECT_SIZE) {
+            memcpy(cache_buf + total_size, buf, n);
+            total_size += n;
+        }
     }
 
+    if (total_size > 0) {
+        save(url, cache_buf, total_size);
+    }
+    
     close(server_fd);
 }
 
