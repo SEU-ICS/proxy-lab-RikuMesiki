@@ -139,5 +139,4 @@ void make(int server_fd, const request_t* req, buf_t request) {
     strcat(request, headers);
     rio_writen(server_fd, request, strlen(request));
 }
-}
 
