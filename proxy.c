@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <netdb.h>
+#include <regex.h>
 #include "csapp.h"
 #include "cache.h"
 
@@ -118,35 +119,23 @@ void serve(int client_fd) {
 }
 
 int split(const char* url, request_t* req) {
-    const char* prefix = "http://";
-    if (strncasecmp(url, prefix, strlen(prefix)) != 0) {
+    const char* pattern = "^http://([^:/]+)(:([0-9]+))?(/.*)?$";
+    regex_t regex;
+    regmatch_t pmatch[5];
+
+    if (regcomp(&regex, pattern, REG_EXTENDED) || regexec(&regex, url, 5, pmatch, 0)) {
+        regfree(&regex);
         return -1;
     }
+    snprintf(req->host, pmatch[1].rm_eo - pmatch[1].rm_so + 1, "%s", url + pmatch[1].rm_so);
+    snprintf(req->port, (pmatch[3].rm_so == -1) ? 3 : pmatch[3].rm_eo - pmatch[3].rm_so + 1, 
+             "%s", (pmatch[3].rm_so == -1) ? "80" : url + pmatch[3].rm_so);
+    snprintf(req->path, (pmatch[4].rm_so == -1) ? 2 : pmatch[4].rm_eo - pmatch[4].rm_so + 1, 
+             "%s", (pmatch[4].rm_so == -1) ? "/" : url + pmatch[4].rm_so);
 
-    char* url_copy = strdup(url + strlen(prefix));
-    char* port_pos = strchr(url_copy, ':');
-    char* path_pos = strchr(url_copy, '/');
-
-    if (port_pos) {
-        *port_pos = '\0';
-        strcpy(req->host, url_copy);
-        *port_pos = ':';
-        sscanf(port_pos + 1, "%[^/]", req->port);
-    } else {
-        strcpy(req->port, "80");
-        path_pos = strchr(url_copy, '/');
-        *path_pos = '\0';
-        strcpy(req->host, url_copy);
-    }
-
-    if (path_pos) {
-        strcpy(req->path, path_pos);
-    } else {
-        strcpy(req->path, "/");
-    }
-
-    free(url_copy);
+    regfree(&regex);
     return 0;
+
 }
 
 void make(int server_fd, const request_t* req, buf_t request) {
